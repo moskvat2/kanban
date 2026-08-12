@@ -11,7 +11,14 @@ class Settings(BaseSettings):
 
     JWT_SECRET_KEY: str = "change-me-in-production"
     JWT_ALGORITHM: str = "HS256"
+    JWT_ISSUER: str = "kanban"
+    JWT_AUDIENCE: str = "kanban-app"
     ACCESS_TOKEN_EXPIRE_MINUTES: int = 1440
+
+    ALLOW_REGISTRATION: bool = True
+
+    RATE_LIMIT_MAX: int = 20
+    RATE_LIMIT_WINDOW_SECONDS: int = 60
 
     CORS_ORIGINS: str = "http://localhost:5173"
 
