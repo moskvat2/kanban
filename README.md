@@ -45,23 +45,45 @@ Sistema de quadro kanban com **React + Vite + TypeScript** (frontend), **Python 
 
 Pré-requisitos: Docker e Docker Compose instalados.
 
+### Modo desenvolvimento (padrão)
+
 ```bash
 cp .env.example .env   # ajuste as credenciais se desejar
 docker compose up -d --build
 ```
 
+Características do modo dev: servidores com recarga automática, código montado por volume e portas expostas para depuração.
+
+### Modo produção (seguro)
+
+```bash
+cp .env.prod.example .env.prod   # TROQUE todos os segredos antes de prosseguir
+docker compose -f docker-compose.prod.yml up -d --build
+```
+
+Características do modo produção:
+
+- **Banco e backend sem portas expostas** (comunicam-se apenas na rede interna do Docker).
+- **Frontend estático servido pelo nginx** — conteiner nginx compila o `dist` com headers de segurança (CSP, `nosniff`, `X-Frame-Options`, etc.) e faz proxy de `/api` para o backend.
+- **Backend com usuário não-root** e uvicorn multi-worker.
+- Imagens imutáveis (sem volume de código).
+
+> **Importante:** em produção, gere chaves fortes e nunca use os valores de exemplo. Gere a chave JWT com `openssl rand -hex 32`.
+
 Acessos:
 
 | Aplicação            | URL                     |
 |----------------------|-------------------------|
-| Frontend             | http://localhost:5173   |
+| Frontend (dev)       | http://localhost:5173   |
+| Frontend (produção)  | http://localhost        |
 | Swagger UI (Backend) | http://localhost:8000/docs |
 | Health check         | http://localhost:8000/api/health |
 
 Para derrubar e remover os dados:
 
 ```bash
-docker compose down -v
+docker compose down -v                     # dev
+docker compose -f docker-compose.prod.yml down -v   # produção
 ```
 
 ---
@@ -240,10 +262,20 @@ Para o drag & drop funcionar corretamente no `@hello-pangea/dnd`, dois detalhes 
 
 ## Docker
 
-`docker-compose.yml` define três serviços:
+O projeto possui **dois níveis de execução**:
 
-1. **db** (`mysql:8.4`) — persistência em volume `db_data`, com healthcheck de ping.
-2. **backend** — build local, depende do banco saudável, monta `./backend` em `/app` (com reload via Uvicorn) e expõe a porta `8000`.
-3. **frontend** — build local (Vite dev server), monta `./frontend` em `/app` com `node_modules` em volume separado e expõe a porta `5173`. O `vite.config.ts` faz proxy de `/api` para o backend.
+### Modo desenvolvimento — `docker-compose.yml`
 
-Os containers utilizam `restart: unless-stopped` e os dados do MySQL ficam no volume `db_data`.
+Define três serviços não-restritivos (focados em produtividade no desenvolvimento):
+
+1. **db** (`mysql:8.4`) — persiste em volume `db_data`, porta `3306` exposta no host, healthcheck de ping.
+2. **backend** — build local, depende do banco saudável, monta `./backend` em `/app` (Uvicorn com reload) e expõe a porta `8000`.
+3. **frontend** — Vite dev server (HMR), monta `./frontend` em `/app` com `node_modules` em volume separado, expõe a porta `5173` e faz proxy de `/api` para o backend.
+
+### Modo produção — `docker-compose.prod.yml` (+ `frontend/Dockerfile.prod` e `backend/Dockerfile.prod`)
+
+1. **db** (`mysql:8.4`) — volume `db_data`, **sem porta exposta** (apenas rede interna).
+2. **backend** — imagem multi-worker com **usuário não-root** e **sem volume de código** (build imutável); só alcançável pela rede interna.
+3. **frontend** — multi-stage: build no Node e servido pelo **nginx**, expondo somente a porta do host (`FRONTEND_PORT`, padrão `80`). O nginx adiciona **headers de segurança** (CSP, `nosniff`, `X-Frame-Options`, etc.) e faz proxy de `/api` para o backend.
+
+Ambos os modos usam `restart: unless-stopped` e os dados do MySQL ficam no volume `db_data`.

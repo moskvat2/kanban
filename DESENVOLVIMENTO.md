@@ -69,6 +69,14 @@ A aplicação roda em **http://localhost:5173** (frontend) e **http://localhost:
 - Repositório Git inicializado com branch `main` e depois branch `Developer` (atual).
 - Publicação no GitHub via SSH (`git@github.com:moskvat2/kanban.git`).
 
+### 2.12 Ambientes dev/produção e segurança
+- **Dois níveis de execução via Docker Compose:**
+  - `docker-compose.yml` — desenvolvimento (relaxado: reload, volumes, portas expostas).
+  - `docker-compose.prod.yml` — produção (seguro: banco/backend sem porta exposta, backend com usuário não-root, frontend estático no nginx).
+- **Nginx de produção:** headers de segurança (CSP, `nosniff`, `X-Frame-Options`, `Referrer-Policy`, `Permissions-Policy`) e proxy `/api` para o backend.
+- **Backend:** middleware de security headers e `react-router-dom` atualizado para a correção mais recente da série 6 (`6.30.4`).
+- Criação de `package-lock.json` para builds reproduzíveis (`npm ci`).
+
 ---
 
 ## 3. Processo de trabalho

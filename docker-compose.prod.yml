@@ -1,20 +1,22 @@
 # =========================================================
-# MODO DE DESENVOLVIMENTO (não-restritivo)
-# Uso: docker compose up -d --build
-# Para produção use: docker compose -f docker-compose.prod.yml up -d --build
+# Produção (seguro): docker compose -f docker-compose.prod.yml
+#
+# Diferenças em relação ao modo dev:
+#   - Banco e backend NÃO expõem portas para o host (rede interna)
+#   - Frontend: build estático servido pelo nginx (headers de segurança)
+#   - Backend: imagem com usuário não-root e uvicorn multi-worker
+#   - Sem volume de código (build imutável)
 # =========================================================
 services:
   db:
     image: mysql:8.4
-    container_name: kanban-db
+    container_name: kanban-db-prod
     restart: unless-stopped
     environment:
       MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD}
       MYSQL_DATABASE: ${MYSQL_DATABASE}
       MYSQL_USER: ${MYSQL_USER}
       MYSQL_PASSWORD: ${MYSQL_PASSWORD}
-    ports:
-      - "3306:3306"
     volumes:
       - db_data:/var/lib/mysql
     healthcheck:
@@ -22,10 +24,14 @@ services:
       interval: 5s
       timeout: 5s
       retries: 20
+    networks:
+      - kanban_net
 
   backend:
-    build: ./backend
-    container_name: kanban-backend
+    build:
+      context: ./backend
+      dockerfile: Dockerfile.prod
+    container_name: kanban-backend-prod
     restart: unless-stopped
     environment:
       DATABASE_URL: mysql+pymysql://${MYSQL_USER}:${MYSQL_PASSWORD}@db:3306/${MYSQL_DATABASE}
@@ -33,28 +39,28 @@ services:
       JWT_ALGORITHM: ${JWT_ALGORITHM}
       ACCESS_TOKEN_EXPIRE_MINUTES: ${ACCESS_TOKEN_EXPIRE_MINUTES}
       CORS_ORIGINS: ${CORS_ORIGINS}
-    ports:
-      - "8000:8000"
-    volumes:
-      - ./backend:/app
     depends_on:
       db:
         condition: service_healthy
+    networks:
+      - kanban_net
 
   frontend:
-    build: ./frontend
-    container_name: kanban-frontend
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile.prod
+    container_name: kanban-frontend-prod
     restart: unless-stopped
-    environment:
-      VITE_API_URL: http://backend:8000
     ports:
-      - "5173:5173"
-    volumes:
-      - ./frontend:/app
-      - frontend_node_modules:/app/node_modules
+      - "${FRONTEND_PORT:-80}:80"
     depends_on:
       - backend
+    networks:
+      - kanban_net
 
 volumes:
   db_data:
-  frontend_node_modules:
+
+networks:
+  kanban_net:
+    driver: bridge
