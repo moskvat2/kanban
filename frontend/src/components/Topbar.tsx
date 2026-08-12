@@ -1,6 +1,7 @@
 import { useState, type CSSProperties, type ReactNode } from "react";
 import { useLocation, useNavigate } from "react-router-dom";
 import { useAuth } from "../context/AuthContext";
+import { useTheme } from "../context/ThemeContext";
 import { accentFor } from "../utils/colors";
 
 interface TopbarProps {
@@ -10,6 +11,7 @@ interface TopbarProps {
 
 export function Topbar({ title, actions }: TopbarProps) {
   const { user, logout } = useAuth();
+  const { theme, setTheme } = useTheme();
   const navigate = useNavigate();
   const location = useLocation();
   const [userMenuOpen, setUserMenuOpen] = useState(false);
@@ -59,6 +61,25 @@ export function Topbar({ title, actions }: TopbarProps) {
           </nav>
 
           {actions}
+
+          <div className="theme-switch" role="group" aria-label="Tema">
+            <button
+              type="button"
+              className={theme === "light" ? "active" : ""}
+              title="Tema claro"
+              onClick={() => setTheme("light")}
+            >
+              ☀
+            </button>
+            <button
+              type="button"
+              className={theme === "dark" ? "active" : ""}
+              title="Tema escuro"
+              onClick={() => setTheme("dark")}
+            >
+              ☾
+            </button>
+          </div>
 
           {user && (
             <div className="user-menu">
