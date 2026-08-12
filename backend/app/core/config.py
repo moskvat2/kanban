@@ -13,7 +13,7 @@ class Settings(BaseSettings):
     JWT_ALGORITHM: str = "HS256"
     JWT_ISSUER: str = "kanban"
     JWT_AUDIENCE: str = "kanban-app"
-    ACCESS_TOKEN_EXPIRE_MINUTES: int = 1440
+    ACCESS_TOKEN_EXPIRE_MINUTES: int = 60
 
     ALLOW_REGISTRATION: bool = True
 
