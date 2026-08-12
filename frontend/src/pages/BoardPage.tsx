@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState, type CSSProperties } from "react";
+import { useCallback, useEffect, useRef, useState, type CSSProperties } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 import {
   DragDropContext,
@@ -32,6 +32,28 @@ export function BoardPage() {
   const [selectedCard, setSelectedCard] = useState<Card | null>(null);
   const [cardTitleDraft, setCardTitleDraft] = useState("");
   const [cardDescDraft, setCardDescDraft] = useState("");
+  const [moveTargetColumnId, setMoveTargetColumnId] = useState<number | null>(null);
+
+  const canvasRef = useRef<HTMLElement | null>(null);
+  const [stackColumns, setStackColumns] = useState(false);
+
+  useEffect(() => {
+    function updateStacking() {
+      const width = window.innerWidth;
+      const colWidth = width <= 480 ? 270 : 300;
+      const gap = width <= 480 ? 12 : 16;
+      const horizontalPadding = width <= 480 ? 24 : 48;
+      const columns = board?.columns ?? [];
+      const total =
+        horizontalPadding +
+        columns.length * colWidth +
+        (columns.length > 0 ? (columns.length - 1) * gap : 0);
+      setStackColumns(total > width);
+    }
+    updateStacking();
+    window.addEventListener("resize", updateStacking);
+    return () => window.removeEventListener("resize", updateStacking);
+  }, [board]);
 
   const loadBoard = useCallback(async () => {
     try {
@@ -193,6 +215,26 @@ export function BoardPage() {
     }
   }
 
+  async function handleMoveCard() {
+    if (!selectedCard || !board) return;
+    const targetColumnId = moveTargetColumnId;
+    if (targetColumnId === null || targetColumnId === selectedCard.column_id) return;
+    const targetColumn = board.columns.find((c) => c.id === targetColumnId);
+    if (!targetColumn) return;
+    try {
+      const updated = await cardsApi.move(
+        selectedCard.id,
+        targetColumnId,
+        targetColumn.cards.length,
+      );
+      setBoard(updated);
+      setSelectedCard(null);
+      setMoveTargetColumnId(null);
+    } catch {
+      setError("Não foi possível mover o cartão.");
+    }
+  }
+
   if (loading) {
     return (
       <div className="screen-center">
@@ -236,7 +278,14 @@ export function BoardPage() {
       <DragDropContext onDragEnd={onDragEnd}>
         <Droppable droppableId="board" direction="horizontal" type="COLUMN">
           {(provided) => (
-            <main className="board-canvas" ref={provided.innerRef} {...provided.droppableProps}>
+            <main
+              className={`board-canvas${stackColumns ? " stacked" : ""}`}
+              ref={(node) => {
+                canvasRef.current = node;
+                provided.innerRef(node);
+              }}
+              {...provided.droppableProps}
+            >
               {board.columns.map((column, columnIndex) => (
                 <Draggable
                   key={column.id}
@@ -324,6 +373,7 @@ export function BoardPage() {
                                       setSelectedCard(card);
                                       setCardTitleDraft(card.title);
                                       setCardDescDraft(card.description ?? "");
+                                      setMoveTargetColumnId(card.column_id);
                                     }}
                                   >
                                     <h4>{card.title}</h4>
@@ -455,7 +505,38 @@ export function BoardPage() {
                 onChange={(e) => setCardDescDraft(e.target.value)}
               />
             </div>
+            <div className="field">
+              <label htmlFor="move-card-to">Mover para</label>
+              <select
+                id="move-card-to"
+                value={moveTargetColumnId ?? selectedCard.column_id}
+                onChange={(e) => setMoveTargetColumnId(Number(e.target.value))}
+                disabled={board.columns.length <= 1}
+              >
+                {board.columns.map((column) => (
+                  <option
+                    key={column.id}
+                    value={column.id}
+                    disabled={column.id === selectedCard.column_id}
+                  >
+                    {column.title}
+                    {column.id === selectedCard.column_id ? " (atual)" : ""}
+                  </option>
+                ))}
+              </select>
+            </div>
             <div className="modal-actions">
+              <button
+                type="button"
+                className="btn-ghost"
+                disabled={
+                  !moveTargetColumnId || moveTargetColumnId === selectedCard.column_id
+                }
+                onClick={() => void handleMoveCard()}
+                title="Mover o cartão para a coluna selecionada"
+              >
+                Mover
+              </button>
               <button type="button" className="btn-primary" onClick={() => void handleUpdateCard()}>
                 Salvar
               </button>
