@@ -128,6 +128,9 @@ export function Dashboard() {
               }}
             >
               <h3>{board.title}</h3>
+              <span className={`board-role-badge${board.is_owner ? "" : " shared"}`}>
+                {board.is_owner ? "Dono" : "Compartilhado"}
+              </span>
               {board.description && <p className="board-desc">{board.description}</p>}
               <div className="board-progress">
                 <div className="board-progress-head">
@@ -148,17 +151,19 @@ export function Dashboard() {
                     : `${board.done_cards} de ${board.cards_count} concluído${board.done_cards === 1 ? "" : "s"}`}
                 </span>
               </div>
-              <button
-                type="button"
-                className="delete-board"
-                onClick={(e) => {
-                  e.stopPropagation();
-                  void handleDelete(board.id);
-                }}
-                title="Excluir quadro"
-              >
-                Excluir
-              </button>
+              {board.is_owner && (
+                <button
+                  type="button"
+                  className="delete-board"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    void handleDelete(board.id);
+                  }}
+                  title="Excluir quadro"
+                >
+                  Excluir
+                </button>
+              )}
             </div>
           ))}
           </div>

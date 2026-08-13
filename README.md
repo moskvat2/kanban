@@ -36,6 +36,8 @@ Sistema de quadro kanban com **React + Vite + TypeScript** (frontend), **Python 
 - **CRUD completo** de quadros, colunas e cartões.
 - **Drag & drop** — arrastar cartões entre colunas e reordenar colunas, com atualização otimista (UI reage antes da API, com rollback via recarga em caso de erro).
 - **Autorização por proprietário** — cada usuário só acessa e cadastra dados em seus próprios quadros (404/403 nos recursos de terceiros).
+- **Quadros compartilhados** — convide usuários por e-mail com papéis **dono / editor / visualizador**; a UI e os endpoints se adaptam ao papel (visualizador é somente leitura, dono gerencia membros e exclui o quadro).
+- **Atualização em tempo real** — cada alteração no quadro (mover/criar/editar/excluir cartões, colunas ou membros) é transmitida via **WebSocket** a todos os usuários conectados no quadro, sem necessidade de recarregar a página.
 - **Andamento do projeto** — cada quadro exibe na tela inicial uma barra de progresso calculada com base nos cartões concluídos (ver [lógica](#lógica-de-andamento-do-projeto)).
 - **Barra superior (Topbar)** — logotipo, menu de navegação, título da página e menu do usuário ativo (avatar com iniciais, nome, e-mail e logout).
 
@@ -187,7 +189,20 @@ kanban/
 | GET    | `/api/boards/{id}`              | Detalhe com colunas e cartões |
 | PATCH  | `/api/boards/{id}`              | Atualiza `{title?, description?}` |
 | DELETE | `/api/boards/{id}`              | Exclui o quadro (e conteúdo em cascata) |
+| GET    | `/api/boards/{id}/members`     | Lista membros do quadro (dono + convidados, com papel) |
+| POST   | `/api/boards/{id}/members`     | Convida membro `{email, role: editor|viewer}` (só dono) |
+| PATCH  | `/api/boards/{id}/members/{user_id}` | Altera papel do membro `{role}` (só dono) |
+| DELETE | `/api/boards/{id}/members/{user_id}` | Remove membro (dono remove qualquer um; membro pode sair) |
 | POST   | `/api/boards/{id}/columns`      | Cria coluna `{title}` |
+
+### Tempo real (WebSocket)
+
+- `WS /ws/board/{board_id}?token=<jwt>` — conecta ao quadro (o token vem na query string; usuário precisa ser dono ou membro).
+- Mensagens recebidas:
+  - `{"type": "board_update", "board": {...}}` — quadro atualizado (cada usuário recebe com o próprio `role`).
+  - `{"type": "members_update", "members": [...]}` — lista de membros atualizada.
+  - `{"type": "board_deleted"}` — quadro excluído (o cliente deve sair da tela).
+- Sem conexões ativas, as mutações não têm custo extra (o broadcast só roda quando há assinantes).
 | PATCH  | `/api/boards/columns/{id}`      | Renomeia coluna `{title}` |
 | DELETE | `/api/boards/columns/{id}`      | Exclui coluna e reordena as demais |
 | PATCH  | `/api/boards/{id}/columns/reorder` | Reordena colunas (body: lista `{id, position}`) |
@@ -236,9 +251,9 @@ Tratativas:
 
 ### Backend
 
-- **Modelos (`app/models/__init__.py`)**: `User`, `Board`, `Column` e `Card`, com relacionamentos em cascata (`all, delete-orphan`) e ordenação por `position`.
+- **Modelos (`app/models/__init__.py`)**: `User`, `Board`, `Column`, `Card` e `BoardMember`, com relacionamentos em cascata (`all, delete-orphan`) e ordenação por `position`.
 - **Segurança (`core/security*.py`)**: senhas com `bcrypt`; tokens JWT assinados com `JWT_SECRET_KEY`; dependências `get_current_user` e `get_board_for_user` garantem que quem consulta é o dono do recurso.
-- **Autorização**: rotas de colunas/cartões checam `column.board.owner_id == user.id`; quadros checam `board.owner_id == user.id`.
+- **Autorização**: acesso por papel via `core/access.py` — `owner` (dono), `editor` (CRUD) e `viewer` (somente leitura). Rotas de colunas/cartões checam o acesso ao quadro do recurso; ações de escrita exigem owner/editor e gestão de membros exige owner.
 - **Ordenação**: colunas e cartões mantêm uma posição inteira e são renumerados ao excluir/mover (funções `_renumber_*`).
 - **Tabelas**: criadas automaticamente via `Base.metadata.create_all`.
 

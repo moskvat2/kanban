@@ -77,6 +77,25 @@ A aplicação roda em **http://localhost:5173** (frontend) e **http://localhost:
 - **Backend:** middleware de security headers e `react-router-dom` atualizado para a correção mais recente da série 6 (`6.30.4`).
 - Criação de `package-lock.json` para builds reproduzíveis (`npm ci`).
 
+### 2.13 Quadros compartilhados
+- Modelo `BoardMember` (`board_id`, `user_id`, `role`, constraint única `(board_id, user_id)`).
+- Papéis: **dono** (`owner`, implícito), **editor** (CRUD completo) e **visualizador** (`viewer`, somente leitura).
+- Módulo `core/access.py` centraliza autorização (`board_role`, `require_role` e dependências `get_board_access`, `get_column_access`, `get_card_access`).
+- `list_boards` passou a incluir quadros onde o usuário é membro; respostas `BoardSummary`/`BoardDetail` ganharam `role`, `is_owner` e `members_count`.
+- Endpoints de gestão de membros (listar, convidar por e-mail, alterar papel, remover/sair).
+- Frontend: modal **Compartilhar**, UI adaptada ao papel (drag & drop, criação/edição e exclusão bloqueados para visualizadores) e badge de papel no dashboard.
+
+### 2.14 Atualização em tempo real (WebSocket)
+- Endpoint `WS /ws/board/{board_id}?token=<jwt>` autentica via JWT e valida acesso (dono/membro).
+- `core/ws.py` mantém as conexões por quadro em memória (válido por rodar com **1 worker** de uvicorn) e transmite:
+  - `board_update` — quadro completo reconstruído por conexão (cada usuário recebe o próprio `role`).
+  - `members_update` — lista de membros (criação/remoção/alteração de papel).
+  - `board_deleted` — quadro excluído (cliente volta ao dashboard).
+- Disparo via `notify_board_changed`/`notify_members_changed`/`notify_board_deleted` após cada mutação (usa `run_coroutine_threadsafe` do loop capturado na 1ª conexão).
+- Serializers extraídos para `core/serializers.py` (evita import circular entre routers e ws).
+- Frontend: `BoardPage` abre o WebSocket com reconnect com backoff e aplica `board_update`/`members_update`/`board_deleted`.
+- Proxy habilitado para WebSocket: Vite (`/ws` com `ws: true`) e nginx de produção (`Upgrade`/`Connection`) com timeout longo.
+
 ---
 
 ## 3. Processo de trabalho
@@ -118,6 +137,8 @@ git push -u origin Developer
 - Drag & drop de cartões e colunas (desktop) + mover via modal (desktop e mobile).
 - Reordenação e empilhamento responsivo no mobile.
 - Barra de progresso por quadro no dashboard.
+- Quadros compartilhados por e-mail com papéis (dono/editor/visualizador).
+- Atualização em tempo real entre os participantes do quadro (WebSocket).
 - Topbar com logotipo, navegação e menu do usuário.
 - Temas claro/escuro configuráveis e persistidos.
 - Responsividade mobile.

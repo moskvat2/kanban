@@ -1,4 +1,4 @@
-from fastapi import FastAPI, Request
+from fastapi import FastAPI, Request, WebSocket, WebSocketDisconnect
 from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
@@ -6,9 +6,12 @@ from slowapi.errors import RateLimitExceeded
 from slowapi.middleware import SlowAPIMiddleware
 from starlette.middleware.base import BaseHTTPMiddleware
 
+from app.core.access import board_role
 from app.core.config import settings
 from app.core.ratelimit import limiter
-from app.db.database import Base, engine
+from app.core.security import decode_access_token
+from app.core.ws import manager
+from app.db.database import Base, SessionLocal, engine
 from app.models import Board, Card, Column, User
 from app.routers import auth, boards, cards
 
@@ -61,3 +64,36 @@ app.include_router(cards.router, prefix="/api", tags=["cards"])
 @app.get("/api/health")
 def health_check():
     return {"status": "ok"}
+
+
+@app.websocket("/ws/board/{board_id}")
+async def board_websocket(websocket: WebSocket, board_id: int, token: str = ""):
+    user_id = _websocket_user_id(token)
+    if user_id is None:
+        await websocket.close(code=1008)
+        return
+    with SessionLocal() as db:
+        user = db.get(User, user_id)
+        board = db.get(Board, board_id)
+        if user is None or board is None or board_role(db, board, user) is None:
+            await websocket.close(code=1008)
+            return
+    await manager.connect(board_id, websocket, user_id)
+    try:
+        while True:
+            await websocket.receive_text()
+    except WebSocketDisconnect:
+        manager.disconnect(board_id, websocket)
+    except Exception:
+        manager.disconnect(board_id, websocket)
+
+
+def _websocket_user_id(token: str) -> int | None:
+    payload = decode_access_token(token)
+    if payload is None:
+        return None
+    subject = payload.get("sub")
+    try:
+        return int(subject)
+    except (TypeError, ValueError):
+        return None

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState, type CSSProperties } from "react";
+import { useCallback, useEffect, useRef, useState, type CSSProperties, type FormEvent } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 import {
   DragDropContext,
@@ -6,9 +6,10 @@ import {
   Droppable,
   type DropResult,
 } from "@hello-pangea/dnd";
-import { boardsApi, cardsApi } from "../api/boards";
+import { boardsApi, cardsApi, membersApi } from "../api/boards";
+import { getToken } from "../api/client";
 import { Topbar } from "../components/Topbar";
-import type { Board, Card, Column } from "../types";
+import type { Board, BoardMember, BoardRole, Card, Column } from "../types";
 import { accentFor } from "../utils/colors";
 
 export function BoardPage() {
@@ -33,6 +34,12 @@ export function BoardPage() {
   const [cardTitleDraft, setCardTitleDraft] = useState("");
   const [cardDescDraft, setCardDescDraft] = useState("");
   const [moveTargetColumnId, setMoveTargetColumnId] = useState<number | null>(null);
+
+  const [membersOpen, setMembersOpen] = useState(false);
+  const [members, setMembers] = useState<BoardMember[]>([]);
+  const [membersError, setMembersError] = useState<string | null>(null);
+  const [newMemberEmail, setNewMemberEmail] = useState("");
+  const [newMemberRole, setNewMemberRole] = useState<BoardRole>("editor");
 
   const canvasRef = useRef<HTMLElement | null>(null);
   const [stackColumns, setStackColumns] = useState(false);
@@ -70,8 +77,111 @@ export function BoardPage() {
     void loadBoard();
   }, [loadBoard]);
 
+  useEffect(() => {
+    if (!boardId) return;
+    let disposed = false;
+    let socket: WebSocket | null = null;
+    let retryTimer: number | undefined;
+    let attempt = 0;
+
+    function handleMessage(event: MessageEvent) {
+      let msg: { type?: string; board?: Board; members?: BoardMember[] };
+      try {
+        msg = JSON.parse(event.data);
+      } catch {
+        return;
+      }
+      if (msg.type === "board_update" && msg.board) {
+        setBoard(msg.board);
+      } else if (msg.type === "members_update" && msg.members) {
+        setMembers(msg.members);
+      } else if (msg.type === "board_deleted") {
+        navigate("/");
+      }
+    }
+
+    function connect() {
+      if (disposed) return;
+      const token = getToken();
+      if (!token) return;
+      const protocol = window.location.protocol === "https:" ? "wss" : "ws";
+      socket = new WebSocket(
+        `${protocol}://${window.location.host}/ws/board/${boardId}?token=${encodeURIComponent(token)}`,
+      );
+      socket.onopen = () => {
+        attempt = 0;
+      };
+      socket.onmessage = handleMessage;
+      socket.onclose = () => {
+        socket = null;
+        if (disposed) return;
+        attempt += 1;
+        retryTimer = window.setTimeout(connect, Math.min(3000 * 2 ** (attempt - 1), 15000));
+      };
+    }
+
+    connect();
+    return () => {
+      disposed = true;
+      if (retryTimer !== undefined) window.clearTimeout(retryTimer);
+      socket?.close();
+    };
+  }, [boardId, navigate]);
+
+  const canEdit = board ? board.role !== "viewer" : false;
+
+  async function openMembers() {
+    if (!board) return;
+    setMembersOpen(true);
+    setMembersError(null);
+    try {
+      const data = await membersApi.list(board.id);
+      setMembers(data);
+    } catch {
+      setMembersError("Não foi possível carregar os membros.");
+    }
+  }
+
+  async function handleAddMember(event: FormEvent) {
+    event.preventDefault();
+    if (!board || !newMemberEmail.trim()) return;
+    try {
+      const member = await membersApi.add(board.id, {
+        email: newMemberEmail.trim(),
+        role: newMemberRole,
+      });
+      setMembers((prev) => [...prev, member]);
+      setNewMemberEmail("");
+      setNewMemberRole("editor");
+    } catch {
+      setMembersError("Não foi possível adicionar o membro. Verifique o e-mail.");
+    }
+  }
+
+  async function handleChangeRole(member: BoardMember, role: BoardRole) {
+    if (!board) return;
+    try {
+      const updated = await membersApi.updateRole(board.id, member.user_id, role);
+      setMembers((prev) => prev.map((m) => (m.user_id === updated.user_id ? updated : m)));
+    } catch {
+      setMembersError("Não foi possível alterar o papel.");
+    }
+  }
+
+  async function handleRemoveMember(member: BoardMember) {
+    if (!board) return;
+    if (!window.confirm(`Remover "${member.name}" do quadro?`)) return;
+    try {
+      await membersApi.remove(board.id, member.user_id);
+      setMembers((prev) => prev.filter((m) => m.user_id !== member.user_id));
+    } catch {
+      setMembersError("Não foi possível remover o membro.");
+    }
+  }
+
   function onDragEnd(result: DropResult) {
     const { destination, source, type } = result;
+    if (!canEdit) return;
     if (!destination) return;
     if (destination.droppableId === source.droppableId && destination.index === source.index) {
       return;
@@ -145,17 +255,8 @@ export function BoardPage() {
     const title = cardDraft.trim();
     if (!title) return;
     try {
-      const card = await cardsApi.create(column.id, { title });
-      setBoard((prev) =>
-        prev
-          ? {
-              ...prev,
-              columns: prev.columns.map((c) =>
-                c.id === column.id ? { ...c, cards: [...c.cards, card] } : c,
-              ),
-            }
-          : prev,
-      );
+      const updated = await cardsApi.create(column.id, { title });
+      setBoard(updated);
       setCardDraft("");
       setAddingCardIn(null);
     } catch {
@@ -265,12 +366,21 @@ export function BoardPage() {
             <button
               type="button"
               className="btn-ghost"
-              onClick={() => {
-                setAddingColumn(true);
-              }}
+              onClick={() => void openMembers()}
             >
-              + Coluna
+              Compartilhar
             </button>
+            {canEdit && (
+              <button
+                type="button"
+                className="btn-ghost"
+                onClick={() => {
+                  setAddingColumn(true);
+                }}
+              >
+                + Coluna
+              </button>
+            )}
           </>
         }
       />
@@ -291,6 +401,7 @@ export function BoardPage() {
                   key={column.id}
                   draggableId={String(column.id)}
                   index={columnIndex}
+                  isDragDisabled={!canEdit}
                 >
                   {(colProvided, colSnapshot) => (
                     <section
@@ -329,25 +440,27 @@ export function BoardPage() {
                             <span className="card-count">{column.cards.length}</span>
                           </h3>
                         )}
-                        <div className="column-actions">
-                          <button
-                            type="button"
-                            title="Renomear"
-                            onClick={() => {
-                              setEditingColumn(column.id);
-                              setColumnTitleDraft(column.title);
-                            }}
-                          >
-                            ✎
-                          </button>
-                          <button
-                            type="button"
-                            title="Excluir"
-                            onClick={() => void handleDeleteColumn(column)}
-                          >
-                            ✕
-                          </button>
-                        </div>
+                        {canEdit && (
+                          <div className="column-actions">
+                            <button
+                              type="button"
+                              title="Renomear"
+                              onClick={() => {
+                                setEditingColumn(column.id);
+                                setColumnTitleDraft(column.title);
+                              }}
+                            >
+                              ✎
+                            </button>
+                            <button
+                              type="button"
+                              title="Excluir"
+                              onClick={() => void handleDeleteColumn(column)}
+                            >
+                              ✕
+                            </button>
+                          </div>
+                        )}
                       </header>
 
                       <Droppable droppableId={String(column.id)} type="CARD">
@@ -362,6 +475,7 @@ export function BoardPage() {
                                 key={card.id}
                                 draggableId={`card-${card.id}`}
                                 index={cardIndex}
+                                isDragDisabled={!canEdit}
                               >
                                 {(cardDragProvided, cardDragSnapshot) => (
                                   <article
@@ -417,7 +531,7 @@ export function BoardPage() {
                                   </button>
                                 </div>
                               </form>
-                            ) : (
+                            ) : canEdit ? (
                               <button
                                 type="button"
                                 className="add-card-btn"
@@ -428,7 +542,7 @@ export function BoardPage() {
                               >
                                 + Adicionar cartão
                               </button>
-                            )}
+                            ) : null}
                           </div>
                         )}
                       </Droppable>
@@ -437,45 +551,47 @@ export function BoardPage() {
                 </Draggable>
               ))}
 
-              {addingColumn ? (
-                <form
-                  className="board-column new-column-form"
-                  onSubmit={(e) => {
-                    e.preventDefault();
-                    void handleCreateColumn();
-                  }}
-                >
-                  <input
-                    autoFocus
-                    type="text"
-                    placeholder="Título da coluna"
-                    value={newColumnTitle}
-                    onChange={(e) => setNewColumnTitle(e.target.value)}
-                  />
-                  <div className="form-actions">
-                    <button type="submit" className="btn-primary">
-                      Criar
-                    </button>
-                    <button
-                      type="button"
-                      className="btn-ghost"
-                      onClick={() => {
-                        setAddingColumn(false);
-                        setNewColumnTitle("");
-                      }}
-                    >
-                      Cancelar
-                    </button>
-                  </div>
-                </form>
-              ) : (
-                <button
-                  type="button"
-                  className="add-column-btn"
-                  onClick={() => setAddingColumn(true)}
-                >
-                  + Nova coluna
-                </button>
+              {canEdit && (
+                addingColumn ? (
+                  <form
+                    className="board-column new-column-form"
+                    onSubmit={(e) => {
+                      e.preventDefault();
+                      void handleCreateColumn();
+                    }}
+                  >
+                    <input
+                      autoFocus
+                      type="text"
+                      placeholder="Título da coluna"
+                      value={newColumnTitle}
+                      onChange={(e) => setNewColumnTitle(e.target.value)}
+                    />
+                    <div className="form-actions">
+                      <button type="submit" className="btn-primary">
+                        Criar
+                      </button>
+                      <button
+                        type="button"
+                        className="btn-ghost"
+                        onClick={() => {
+                          setAddingColumn(false);
+                          setNewColumnTitle("");
+                        }}
+                      >
+                        Cancelar
+                      </button>
+                    </div>
+                  </form>
+                ) : (
+                  <button
+                    type="button"
+                    className="add-column-btn"
+                    onClick={() => setAddingColumn(true)}
+                  >
+                    + Nova coluna
+                  </button>
+                )
               )}
               {provided.placeholder}
             </main>
@@ -486,65 +602,161 @@ export function BoardPage() {
       {selectedCard && (
         <div className="modal-overlay" onClick={() => setSelectedCard(null)}>
           <div className="modal" onClick={(e) => e.stopPropagation()}>
-            <h3>Detalhes do cartão</h3>
-            <div className="field">
-              <label htmlFor="card-title">Título</label>
-              <input
-                id="card-title"
-                type="text"
-                value={cardTitleDraft}
-                onChange={(e) => setCardTitleDraft(e.target.value)}
-              />
-            </div>
-            <div className="field">
-              <label htmlFor="card-desc">Descrição</label>
-              <textarea
-                id="card-desc"
-                rows={5}
-                value={cardDescDraft}
-                onChange={(e) => setCardDescDraft(e.target.value)}
-              />
-            </div>
-            <div className="field">
-              <label htmlFor="move-card-to">Mover para</label>
-              <select
-                id="move-card-to"
-                value={moveTargetColumnId ?? selectedCard.column_id}
-                onChange={(e) => setMoveTargetColumnId(Number(e.target.value))}
-                disabled={board.columns.length <= 1}
-              >
-                {board.columns.map((column) => (
-                  <option
-                    key={column.id}
-                    value={column.id}
-                    disabled={column.id === selectedCard.column_id}
+            {!canEdit ? (
+              <>
+                <h3>{selectedCard.title}</h3>
+                <div className="viewer-card-view">
+                  {selectedCard.description ? (
+                    <p>{selectedCard.description}</p>
+                  ) : (
+                    <p className="empty-state">Sem descrição</p>
+                  )}
+                </div>
+                <div className="modal-actions">
+                  <button type="button" className="btn-primary" onClick={() => setSelectedCard(null)}>
+                    Fechar
+                  </button>
+                </div>
+              </>
+            ) : (
+              <>
+                <h3>Detalhes do cartão</h3>
+                <div className="field">
+                  <label htmlFor="card-title">Título</label>
+                  <input
+                    id="card-title"
+                    type="text"
+                    value={cardTitleDraft}
+                    onChange={(e) => setCardTitleDraft(e.target.value)}
+                  />
+                </div>
+                <div className="field">
+                  <label htmlFor="card-desc">Descrição</label>
+                  <textarea
+                    id="card-desc"
+                    rows={5}
+                    value={cardDescDraft}
+                    onChange={(e) => setCardDescDraft(e.target.value)}
+                  />
+                </div>
+                <div className="field">
+                  <label htmlFor="move-card-to">Mover para</label>
+                  <select
+                    id="move-card-to"
+                    value={moveTargetColumnId ?? selectedCard.column_id}
+                    onChange={(e) => setMoveTargetColumnId(Number(e.target.value))}
+                    disabled={board.columns.length <= 1}
                   >
-                    {column.title}
-                    {column.id === selectedCard.column_id ? " (atual)" : ""}
-                  </option>
-                ))}
-              </select>
-            </div>
+                    {board.columns.map((column) => (
+                      <option
+                        key={column.id}
+                        value={column.id}
+                        disabled={column.id === selectedCard.column_id}
+                      >
+                        {column.title}
+                        {column.id === selectedCard.column_id ? " (atual)" : ""}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+                <div className="modal-actions">
+                  <button
+                    type="button"
+                    className="btn-ghost"
+                    disabled={
+                      !moveTargetColumnId || moveTargetColumnId === selectedCard.column_id
+                    }
+                    onClick={() => void handleMoveCard()}
+                    title="Mover o cartão para a coluna selecionada"
+                  >
+                    Mover
+                  </button>
+                  <button type="button" className="btn-primary" onClick={() => void handleUpdateCard()}>
+                    Salvar
+                  </button>
+                  <button type="button" className="btn-danger" onClick={() => void handleDeleteCard()}>
+                    Excluir
+                  </button>
+                  <button type="button" className="btn-ghost" onClick={() => setSelectedCard(null)}>
+                    Cancelar
+                  </button>
+                </div>
+              </>
+            )}
+          </div>
+        </div>
+      )}
+      {membersOpen && (
+        <div className="modal-overlay" onClick={() => setMembersOpen(false)}>
+          <div className="modal member-modal" onClick={(e) => e.stopPropagation()}>
+            <h3>Compartilhar quadro</h3>
+
+            {membersError && <p className="form-error">{membersError}</p>}
+
+            {board.is_owner && (
+              <form className="member-add-form" onSubmit={(e) => void handleAddMember(e)}>
+                <input
+                  type="email"
+                  placeholder="E-mail do membro"
+                  value={newMemberEmail}
+                  onChange={(e) => setNewMemberEmail(e.target.value)}
+                  required
+                />
+                <select
+                  value={newMemberRole}
+                  onChange={(e) => setNewMemberRole(e.target.value as BoardRole)}
+                >
+                  <option value="editor">Editor</option>
+                  <option value="viewer">Visualizador</option>
+                </select>
+                <button type="submit" className="btn-primary" disabled={!newMemberEmail.trim()}>
+                  Adicionar
+                </button>
+              </form>
+            )}
+
+            <ul className="member-list">
+              {members.map((member) => (
+                <li key={member.user_id} className="member-item">
+                  <span className="member-avatar">{member.name.slice(0, 2).toUpperCase()}</span>
+                  <div className="member-info">
+                    <span className="member-name">
+                      {member.name}
+                      {member.user_id === board.owner_id && <em> (dono)</em>}
+                    </span>
+                    <span className="member-email">{member.email}</span>
+                  </div>
+                  {board.is_owner && member.role !== "owner" ? (
+                    <>
+                      <select
+                        className="member-role-select"
+                        value={member.role}
+                        onChange={(e) => void handleChangeRole(member, e.target.value as BoardRole)}
+                      >
+                        <option value="editor">Editor</option>
+                        <option value="viewer">Visualizador</option>
+                      </select>
+                      <button
+                        type="button"
+                        className="member-remove-btn"
+                        title="Remover do quadro"
+                        onClick={() => void handleRemoveMember(member)}
+                      >
+                        ✕
+                      </button>
+                    </>
+                  ) : (
+                    <span className={`member-role-pill ${member.role}`}>
+                      {member.role === "owner" ? "Dono" : member.role === "editor" ? "Editor" : "Visualizador"}
+                    </span>
+                  )}
+                </li>
+              ))}
+            </ul>
+
             <div className="modal-actions">
-              <button
-                type="button"
-                className="btn-ghost"
-                disabled={
-                  !moveTargetColumnId || moveTargetColumnId === selectedCard.column_id
-                }
-                onClick={() => void handleMoveCard()}
-                title="Mover o cartão para a coluna selecionada"
-              >
-                Mover
-              </button>
-              <button type="button" className="btn-primary" onClick={() => void handleUpdateCard()}>
-                Salvar
-              </button>
-              <button type="button" className="btn-danger" onClick={() => void handleDeleteCard()}>
-                Excluir
-              </button>
-              <button type="button" className="btn-ghost" onClick={() => setSelectedCard(null)}>
-                Cancelar
+              <button type="button" className="btn-primary" onClick={() => setMembersOpen(false)}>
+                Fechar
               </button>
             </div>
           </div>

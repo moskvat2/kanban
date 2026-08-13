@@ -29,6 +29,8 @@ export interface Column {
   cards: Card[];
 }
 
+export type BoardRole = "owner" | "editor" | "viewer";
+
 export interface Board {
   id: number;
   title: string;
@@ -36,6 +38,9 @@ export interface Board {
   owner_id: number;
   created_at: string;
   columns: Column[];
+  role: BoardRole;
+  is_owner: boolean;
+  members_count: number;
 }
 
 export interface BoardSummary {
@@ -48,4 +53,15 @@ export interface BoardSummary {
   cards_count: number;
   done_cards: number;
   columns_count: number;
+  role: BoardRole;
+  is_owner: boolean;
+  members_count: number;
+}
+
+export interface BoardMember {
+  user_id: number;
+  name: string;
+  email: string;
+  role: BoardRole;
+  created_at: string;
 }

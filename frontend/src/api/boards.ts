@@ -1,5 +1,5 @@
 import { api } from "./client";
-import type { Board, BoardSummary, Card, TokenResponse, User } from "../types";
+import type { Board, BoardMember, BoardRole, BoardSummary, Card, TokenResponse, User } from "../types";
 
 export const authApi = {
   register: (data: { name: string; email: string; password: string }) =>
@@ -36,9 +36,23 @@ export const boardsApi = {
     api.patch<Board>(`/boards/${boardId}/columns/reorder`, items).then((r) => r.data),
 };
 
+export const membersApi = {
+  list: (boardId: number) =>
+    api.get<BoardMember[]>(`/boards/${boardId}/members`).then((r) => r.data),
+
+  add: (boardId: number, data: { email: string; role: BoardRole }) =>
+    api.post<BoardMember>(`/boards/${boardId}/members`, data).then((r) => r.data),
+
+  updateRole: (boardId: number, userId: number, role: BoardRole) =>
+    api.patch<BoardMember>(`/boards/${boardId}/members/${userId}`, { role }).then((r) => r.data),
+
+  remove: (boardId: number, userId: number) =>
+    api.delete(`/boards/${boardId}/members/${userId}`),
+};
+
 export const cardsApi = {
   create: (columnId: number, data: { title: string; description?: string }) =>
-    api.post<Card>(`/columns/${columnId}/cards`, data).then((r) => r.data),
+    api.post<Board>(`/columns/${columnId}/cards`, data).then((r) => r.data),
 
   update: (cardId: number, data: { title?: string; description?: string }) =>
     api.patch<Card>(`/cards/${cardId}`, data).then((r) => r.data),

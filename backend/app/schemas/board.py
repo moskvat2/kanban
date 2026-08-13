@@ -1,6 +1,7 @@
 from datetime import datetime
+from typing import Literal
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, EmailStr, Field
 
 
 class CardCreate(BaseModel):
@@ -78,7 +79,30 @@ class BoardSummary(BoardOut):
     cards_count: int
     done_cards: int
     columns_count: int
+    role: Literal["owner", "editor", "viewer"] = "viewer"
+    is_owner: bool = False
+    members_count: int = 1
 
 
 class BoardDetail(BoardOut):
     columns: list[ColumnOut] = []
+    role: Literal["owner", "editor", "viewer"] = "viewer"
+    is_owner: bool = False
+    members_count: int = 1
+
+
+class MemberOut(BaseModel):
+    user_id: int
+    name: str
+    email: EmailStr
+    role: Literal["owner", "editor", "viewer"]
+    created_at: datetime
+
+
+class MemberCreate(BaseModel):
+    email: EmailStr
+    role: Literal["editor", "viewer"] = "editor"
+
+
+class MemberRoleUpdate(BaseModel):
+    role: Literal["editor", "viewer"]

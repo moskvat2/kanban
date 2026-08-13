@@ -1,6 +1,6 @@
 from datetime import datetime
 
-from sqlalchemy import DateTime, ForeignKey, String, Text, func
+from sqlalchemy import DateTime, ForeignKey, String, Text, UniqueConstraint, func
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.db.database import Base
@@ -19,6 +19,10 @@ class User(Base):
         back_populates="owner", cascade="all, delete-orphan"
     )
 
+    board_memberships: Mapped[list["BoardMember"]] = relationship(
+        back_populates="user", cascade="all, delete-orphan"
+    )
+
 
 class Board(Base):
     __tablename__ = "boards"
@@ -35,6 +39,30 @@ class Board(Base):
         cascade="all, delete-orphan",
         order_by="Column.position",
     )
+    members: Mapped[list["BoardMember"]] = relationship(
+        back_populates="board",
+        cascade="all, delete-orphan",
+    )
+
+
+class BoardMember(Base):
+    __tablename__ = "board_members"
+    __table_args__ = (
+        UniqueConstraint("board_id", "user_id", name="uq_board_member"),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True, index=True)
+    board_id: Mapped[int] = mapped_column(
+        ForeignKey("boards.id", ondelete="CASCADE"), index=True
+    )
+    user_id: Mapped[int] = mapped_column(
+        ForeignKey("users.id", ondelete="CASCADE"), index=True
+    )
+    role: Mapped[str] = mapped_column(String(20), default="editor")
+    created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
+
+    board: Mapped["Board"] = relationship(back_populates="members")
+    user: Mapped["User"] = relationship(back_populates="board_memberships")
 
 
 class Column(Base):
